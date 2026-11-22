@@ -86,7 +86,10 @@ blueprint:
               unit_of_measurement: °C
         fallback_mode:
           name: Fallback mode
-          description: Used on close when no saved state exists (e.g. Home Assistant restarted while the window was open).
+          description: >-
+            Used on close when no saved state exists (e.g. Home Assistant restarted
+            while the window was open). Thermostats without this mode get "heat" with
+            the fallback temperature.
           default: auto
           selector:
             select:
@@ -95,6 +98,16 @@ blueprint:
                 - heat
                 - heat_cool
                 - "off"
+        fallback_temperature:
+          name: Fallback temperature
+          description: Setpoint used when the fallback ends up as "heat".
+          default: 20
+          selector:
+            number:
+              min: 10
+              max: 25
+              step: 0.5
+              unit_of_measurement: °C
 
 mode: queued
 max_exceeded: silent
@@ -105,6 +118,7 @@ variables:
   open_action: !input open_action
   frost_temperature: !input frost_temperature
   fallback_mode: !input fallback_mode
+  fallback_temperature: !input fallback_temperature
   # One snapshot scene per automation instance.
   snapshot_id: "window_restore_{{ this.entity_id | replace('automation.', '') }}"
   snapshot_scene: "scene.{{ snapshot_id }}"
@@ -135,7 +149,8 @@ actions:
               scene_id: "{{ snapshot_id }}"
               snapshot_entities: "{{ thermostats }}"
           - repeat:
-              for_each: "{{ thermostats }}"
+              # A thermostat that is already off stays off (no heating at frost level in summer).
+              for_each: "{{ thermostats | reject('is_state', 'off') | list }}"
               sequence:
                 - if:
                     - "{{ open_action == 'off' }}"
@@ -186,8 +201,24 @@ actions:
                              else (state_attr(repeat.item, 'temperature') | float(99))
                                   <= [frost_temperature | float, state_attr(repeat.item, 'min_temp') | float(0)] | max }}
                       then:
-                        - action: climate.set_hvac_mode
-                          target:
-                            entity_id: "{{ repeat.item }}"
-                          data:
-                            hvac_mode: "{{ fallback_mode }}"
+                        - variables:
+                            mode: >-
+                              {{ fallback_mode if fallback_mode in (state_attr(repeat.item, 'hvac_modes') or [])
+                                 else 'heat' }}
+                        - if:
+                            - "{{ mode == 'heat' }}"
+                          then:
+                            - action: climate.set_temperature
+                              continue_on_error: true
+                              target:
+                                entity_id: "{{ repeat.item }}"
+                              data:
+                                hvac_mode: heat
+                                temperature: "{{ fallback_temperature }}"
+                          else:
+                            - action: climate.set_hvac_mode
+                              continue_on_error: true
+                              target:
+                                entity_id: "{{ repeat.item }}"
+                              data:
+                                hvac_mode: "{{ mode }}"
