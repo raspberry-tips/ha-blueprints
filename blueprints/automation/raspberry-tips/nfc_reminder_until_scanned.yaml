@@ -223,7 +223,8 @@ actions:
                     target:
                       entity_id: "{{ last_done }}"
                     data:
-                      datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+                      # timestamp works for date-only, time-only and date+time helpers alike
+                      timestamp: "{{ now().timestamp() }}"
               - repeat:
                   for_each: "{{ notify_actions }}"
                   sequence:

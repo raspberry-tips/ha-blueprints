@@ -127,11 +127,18 @@ triggers:
   - trigger: state
     entity_id: !input window_sensors
     to: "on"
+    # A restart takes contacts through unavailable/unknown; that is not a window being opened or closed.
+    not_from:
+      - unavailable
+      - unknown
     for: !input open_delay
     id: opened
   - trigger: state
     entity_id: !input window_sensors
     to: "off"
+    not_from:
+      - unavailable
+      - unknown
     for: !input close_delay
     id: closed
 
@@ -176,9 +183,13 @@ actions:
         conditions:
           - condition: trigger
             id: closed
-          - condition: state
-            entity_id: !input window_sensors
-            state: "off"
+          # No contact reports open. A contact that has gone unavailable does not keep the room cold.
+          - condition: not
+            conditions:
+              - condition: state
+                entity_id: !input window_sensors
+                state: "on"
+                match: any
         sequence:
           - if:
               # A scene's state stays "unknown" until it is activated, so check that it exists.
