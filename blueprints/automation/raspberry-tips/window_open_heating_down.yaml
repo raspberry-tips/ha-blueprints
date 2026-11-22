@@ -128,27 +128,34 @@ actions:
           - condition: trigger
             id: opened
           # Do not snapshot an already lowered state when a second window opens.
-          - "{{ states(snapshot_scene) in ['unknown', 'unavailable'] }}"
+          - "{{ expand(snapshot_scene) | count == 0 }}"
         sequence:
           - action: scene.create
             data:
               scene_id: "{{ snapshot_id }}"
               snapshot_entities: "{{ thermostats }}"
-          - if:
-              - "{{ open_action == 'off' }}"
-            then:
-              - action: climate.set_hvac_mode
-                target:
-                  entity_id: !input thermostats
-                data:
-                  hvac_mode: "off"
-            else:
-              - action: climate.set_temperature
-                target:
-                  entity_id: !input thermostats
-                data:
-                  hvac_mode: heat
-                  temperature: "{{ frost_temperature }}"
+          - repeat:
+              for_each: "{{ thermostats }}"
+              sequence:
+                - if:
+                    - "{{ open_action == 'off' }}"
+                  then:
+                    - action: climate.set_hvac_mode
+                      continue_on_error: true
+                      target:
+                        entity_id: "{{ repeat.item }}"
+                      data:
+                        hvac_mode: "off"
+                  else:
+                    # Never go below what the thermostat accepts (many refuse values under 5 or 7 °C).
+                    - action: climate.set_temperature
+                      continue_on_error: true
+                      target:
+                        entity_id: "{{ repeat.item }}"
+                      data:
+                        hvac_mode: heat
+                        temperature: >-
+                          {{ [frost_temperature | float, state_attr(repeat.item, 'min_temp') | float(0)] | max }}
 
       - alias: All windows closed again
         conditions:
@@ -159,7 +166,8 @@ actions:
             state: "off"
         sequence:
           - if:
-              - "{{ states(snapshot_scene) not in ['unknown', 'unavailable'] }}"
+              # A scene's state stays "unknown" until it is activated, so check that it exists.
+              - "{{ expand(snapshot_scene) | count > 0 }}"
             then:
               - action: scene.turn_on
                 target:
@@ -175,7 +183,8 @@ actions:
                     - if:
                         - >-
                           {{ is_state(repeat.item, 'off') if open_action == 'off'
-                             else (state_attr(repeat.item, 'temperature') | float(99)) <= frost_temperature | float }}
+                             else (state_attr(repeat.item, 'temperature') | float(99))
+                                  <= [frost_temperature | float, state_attr(repeat.item, 'min_temp') | float(0)] | max }}
                       then:
                         - action: climate.set_hvac_mode
                           target:
