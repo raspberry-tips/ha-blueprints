@@ -1,0 +1,251 @@
+blueprint:
+  name: NFC reminder that stops when the tag is scanned
+  description: >-
+    Keeps reminding you on your phone until you scan an NFC tag at the place of
+    the task (dishwasher, washing machine, pill box ...). Scanning the tag marks the
+    task as done, clears the reminder from every phone and confirms it.
+
+
+    The task is an input_boolean: on = still to do. Turn it on from any other
+    automation (e.g. "washing machine finished") or let this blueprint reopen it
+    every day.
+
+
+    Full guide with tag setup (Companion app or a PN532 reader):
+    https://raspberry.tips/en/smart-home/home-assistant-nfc-tags-reminders
+  domain: automation
+  author: raspberry.tips
+  source_url: https://github.com/raspberry-tips/ha-blueprints/blob/main/blueprints/automation/raspberry-tips/nfc_reminder_until_scanned.yaml
+  homeassistant:
+    min_version: "2024.10.0"
+  input:
+    task:
+      name: Task
+      icon: mdi:nfc-variant
+      input:
+        task_flag:
+          name: Task open (input_boolean)
+          description: "Create a Toggle helper first. On = still to do, off = done."
+          selector:
+            entity:
+              domain: input_boolean
+        tag_id:
+          name: Tag ID
+          description: >-
+            The ID of the NFC tag as shown under Settings → Tags (for a tag written
+            as https://www.home-assistant.io/tag/dishwasher the ID is "dishwasher").
+          selector:
+            text:
+        notify_devices:
+          name: Phones
+          description: Phones with the Home Assistant Companion app that get the reminder.
+          selector:
+            device:
+              integration: mobile_app
+              multiple: true
+    reminder:
+      name: Reminder
+      icon: mdi:bell-ring
+      input:
+        reminder_interval:
+          name: Remind every
+          default: "/30"
+          selector:
+            select:
+              options:
+                - label: 10 minutes
+                  value: "/10"
+                - label: 15 minutes
+                  value: "/15"
+                - label: 20 minutes
+                  value: "/20"
+                - label: 30 minutes
+                  value: "/30"
+        quiet_after:
+          name: Remind only after
+          default: "07:00:00"
+          selector:
+            time:
+        quiet_before:
+          name: Remind only before
+          default: "22:00:00"
+          selector:
+            time:
+        reminder_title:
+          name: Reminder title
+          default: Task still open
+          selector:
+            text:
+        reminder_message:
+          name: Reminder text
+          default: Scan the NFC tag once it is done.
+          selector:
+            text:
+              multiline: true
+        open_url:
+          name: Open on tap (optional)
+          description: Dashboard path to open when the reminder is tapped, e.g. /dashboard-reminders/0. Leave empty for none.
+          default: ""
+          selector:
+            text:
+    done:
+      name: When the tag is scanned
+      icon: mdi:check-circle
+      collapsed: true
+      input:
+        done_title:
+          name: Confirmation title
+          default: ✓ Done
+          selector:
+            text:
+        done_message:
+          name: Confirmation text
+          default: Marked as done.
+          selector:
+            text:
+        already_done_message:
+          name: Text when the task was already done (empty = no message)
+          default: Nothing to do, this was already marked as done.
+          selector:
+            text:
+        last_done:
+          name: Remember when it was done (optional input_datetime)
+          default: []
+          selector:
+            entity:
+              domain: input_datetime
+              multiple: true
+    daily:
+      name: Reopen every day (optional)
+      icon: mdi:calendar-refresh
+      collapsed: true
+      input:
+        daily_reopen:
+          name: Reopen the task every day
+          description: For daily tasks such as medication. Off if another automation opens the task.
+          default: false
+          selector:
+            boolean:
+        daily_reopen_time:
+          name: Reopen at
+          default: "03:00:00"
+          selector:
+            time:
+
+mode: queued
+max_exceeded: silent
+
+variables:
+  task_flag: !input task_flag
+  tag_id: !input tag_id
+  notify_devices: !input notify_devices
+  reminder_title: !input reminder_title
+  reminder_message: !input reminder_message
+  open_url: !input open_url
+  done_title: !input done_title
+  done_message: !input done_message
+  already_done_message: !input already_done_message
+  last_done: !input last_done
+  # Companion app action per phone: notify.mobile_app_<device name as registered>
+  notify_actions: >-
+    {{ notify_devices | map('device_attr', 'name') | map('slugify')
+       | map('regex_replace', '^', 'notify.mobile_app_') | list }}
+  # The notification tag lets a later clear_notification remove exactly this reminder.
+  notification_tag: "nfc_reminder_{{ tag_id | slugify }}"
+
+triggers:
+  - trigger: state
+    entity_id: !input task_flag
+    to: "on"
+    id: remind
+  - trigger: time_pattern
+    minutes: !input reminder_interval
+    id: remind
+  - trigger: tag
+    tag_id: !input tag_id
+    id: scanned
+  - trigger: time
+    at: !input daily_reopen_time
+    id: reopen
+    enabled: !input daily_reopen
+
+actions:
+  - choose:
+      - alias: New day, reopen the task
+        conditions:
+          - condition: trigger
+            id: reopen
+        sequence:
+          - action: input_boolean.turn_on
+            target:
+              entity_id: !input task_flag
+
+      - alias: Remind while the task is open
+        conditions:
+          - condition: trigger
+            id: remind
+          - condition: state
+            entity_id: !input task_flag
+            state: "on"
+          - condition: time
+            after: !input quiet_after
+            before: !input quiet_before
+        sequence:
+          - repeat:
+              for_each: "{{ notify_actions }}"
+              sequence:
+                - action: "{{ repeat.item }}"
+                  continue_on_error: true
+                  data:
+                    title: "{{ reminder_title }}"
+                    message: "{{ reminder_message }}"
+                    data: >-
+                      {{ dict(tag=notification_tag, url=open_url) if open_url
+                         else dict(tag=notification_tag) }}
+
+      - alias: Tag scanned
+        conditions:
+          - condition: trigger
+            id: scanned
+        sequence:
+          - if:
+              - condition: state
+                entity_id: !input task_flag
+                state: "on"
+            then:
+              - action: input_boolean.turn_off
+                target:
+                  entity_id: !input task_flag
+              - if:
+                  - "{{ last_done | count > 0 }}"
+                then:
+                  - action: input_datetime.set_datetime
+                    target:
+                      entity_id: "{{ last_done }}"
+                    data:
+                      datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+              - repeat:
+                  for_each: "{{ notify_actions }}"
+                  sequence:
+                    - action: "{{ repeat.item }}"
+                      continue_on_error: true
+                      data:
+                        message: clear_notification
+                        data:
+                          tag: "{{ notification_tag }}"
+                    - action: "{{ repeat.item }}"
+                      continue_on_error: true
+                      data:
+                        title: "{{ done_title }}"
+                        message: "{{ done_message }}"
+            else:
+              - if:
+                  - "{{ already_done_message | length > 0 }}"
+                then:
+                  - repeat:
+                      for_each: "{{ notify_actions }}"
+                      sequence:
+                        - action: "{{ repeat.item }}"
+                          continue_on_error: true
+                          data:
+                            message: "{{ already_done_message }}"
