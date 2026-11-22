@@ -23,8 +23,8 @@ Needs the Home Assistant Companion app on the phones (iOS or Android). How to wr
 - Select every window and door contact in the room. The heating only comes back when **all** of them are closed.
 - Saves the thermostats' state before turning them down and restores exactly that state, so a thermostat running its own schedule (`auto`, e.g. Homematic IP) goes back to `auto` rather than being forced to `heat`.
 - If a second window opens while the heating is already down, the saved state is left alone.
-- While open, the thermostat either gets a low frost-protection temperature (default 5 °C) or is turned off.
-- The saved state lives in a temporary scene. If Home Assistant restarts while a window is open, the fallback mode is used on close, and only for thermostats that still look turned down.
+- While open, the thermostat either gets a low frost-protection temperature (default 5 °C, raised to the thermostat's own minimum if it doesn't accept that) or is turned off. Thermostats that are already off are left alone, so nothing starts heating in summer.
+- The saved state lives in a temporary scene. If Home Assistant restarts while a window is open, the fallback mode is used on close, and only for thermostats that still look turned down. Thermostats that don't support the fallback mode get `heat` with the fallback temperature.
 
 Works with any window contact (Zigbee, Z-Wave, Homematic, Shelly …) and any climate entity. Background, cheap window contacts and a Better Thermostat alternative: **[Window Open, Heating On? Home Assistant Reminds the Kids – and Turns the Heating Down](https://raspberry.tips/en/smart-home/window-open-heating-off-home-assistant)** (German version: [Fenster offen, Heizung an?](https://raspberry.tips/smart-home/fenster-offen-heizung-aus-home-assistant)).
 
